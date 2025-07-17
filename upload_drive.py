@@ -21,16 +21,6 @@ def autenticar_drive():
         creds = None
         if os.path.exists(TOKEN_FILE):
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                # Atualiza o token salvo
-                with open(TOKEN_FILE, 'w') as token:
-                    token.write(creds.to_json())
-            else:
-                raise Exception("Token inválido. Gere localmente e envie como secret.")
-        
         return build('drive', 'v3', credentials=creds)
     
     except Exception as e:
