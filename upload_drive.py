@@ -1,21 +1,45 @@
 import os
 import json
+import time
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-import time
 
-# Configurações
+# Caminhos fixos dos arquivos secretos
+CREDENTIALS_FILE = '/etc/secrets/credentials.json'
+TOKEN_FILE = '/etc/secrets/token.json'
+METADADOS_FILE = '/etc/secrets/metadados_shapefile.json'
+
+# ID da pasta no Google Drive (ou leia de variável de ambiente)
+PASTA_DESTINO_ID = '1rpazJv21rg7lCJHknjxqSFu8XewYSTRQ'
+
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.json'
-PASTA_DESTINO_ID = '1rpazJv21rg7lCJHknjxqSFu8XewYSTRQ'  # ID da pasta no Drive
+
+def autenticar_drive():
+    try:
+        creds = None
+        if os.path.exists(TOKEN_FILE):
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                # Atualiza o token salvo
+                with open(TOKEN_FILE, 'w') as token:
+                    token.write(creds.to_json())
+            else:
+                raise Exception("Token inválido. Gere localmente e envie como secret.")
+        
+        return build('drive', 'v3', credentials=creds)
+    
+    except Exception as e:
+        print(f"[ERRO] Autenticação falhou: {e}")
+        return None
 
 def carregar_metadados():
     try:
-        with open('metadados_shapefile.json') as f:
+        with open(METADADOS_FILE) as f:
             metadados = json.load(f)
         
         for caminho in metadados['caminhos_completos']:
@@ -24,29 +48,7 @@ def carregar_metadados():
         
         return metadados
     except Exception as e:
-        print(f"Erro ao carregar metadados: {e}")
-        return None
-
-def autenticar_drive():
-    try:
-        creds = None
-        
-        if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
-        
-        return build('drive', 'v3', credentials=creds)
-    except Exception as e:
-        print(f"Falha na autenticação: {e}")
+        print(f"[ERRO] Falha ao carregar metadados: {e}")
         return None
 
 def upload_arquivo(service, caminho_arquivo, tentativa=1, max_tentativas=3):
@@ -70,28 +72,28 @@ def upload_arquivo(service, caminho_arquivo, tentativa=1, max_tentativas=3):
         'name': nome_arquivo,
         'parents': [PASTA_DESTINO_ID] if PASTA_DESTINO_ID else []
     }
-    
+
     try:
         media = MediaFileUpload(caminho_arquivo, mimetype=mime_type, resumable=True)
         request = service.files().create(body=file_metadata, media_body=media, fields='id,name,size')
-        
+
         response = None
         while response is None:
             status, response = request.next_chunk()
             if status:
-                print(f"Progresso {nome_arquivo}: {int(status.progress() * 100)}%")
-        
-        print(f"Upload concluído: {response['name']} (ID: {response['id']})")
+                print(f"[UPLOAD] {nome_arquivo}: {int(status.progress() * 100)}%")
+
+        print(f"[SUCESSO] {response['name']} enviado! ID: {response['id']}")
         return True
-        
+    
     except Exception as e:
         if tentativa < max_tentativas:
-            print(f"Tentativa {tentativa} falhou. Tentando novamente em 5 segundos...")
+            print(f"[TENTATIVA {tentativa}] Falha. Retentando em 5s...")
             time.sleep(5)
             return upload_arquivo(service, caminho_arquivo, tentativa + 1)
-        print(f"Falha no upload de {nome_arquivo} após {max_tentativas} tentativas: {e}")
+        print(f"[ERRO] Falha no upload {nome_arquivo}: {e}")
         return False
-
+        
 def main():
     print("Iniciando processo de upload para o Google Drive...")
     
