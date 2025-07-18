@@ -63,8 +63,9 @@ def process_data():
         print("🔄 Iniciando upload para o Drive...")
         resultado = subprocess.run(
             [sys.executable, "upload_drive.py"],
-            capture_output=True,
-            text=True
+            input=json.dumps({'caminhos_completos': lista_de_arquivos}),
+            text=True,
+            check=True
         )
         if resultado.returncode != 0:
             print("❌ Erro no upload:", resultado.stderr)
