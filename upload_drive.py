@@ -1,86 +1,61 @@
-# upload_drive.py (versão corrigida)
 import os
-import json  # Importação faltante
+import json
 import sys
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Configurações via variáveis de ambiente
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 SERVICE_ACCOUNT_JSON = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
 DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
 def autenticar_drive():
-    """Conecta ao Google Drive usando Service Account"""
     try:
         creds = Credentials.from_service_account_info(
             json.loads(SERVICE_ACCOUNT_JSON),
             scopes=SCOPES
         )
         return build('drive', 'v3', credentials=creds)
-    except json.JSONDecodeError:
-        print("❌ Erro: JSON da Service Account inválido")
     except Exception as e:
-        print(f"❌ Falha na autenticação: {str(e)}")
-    return None
+        print(f"❌ Erro de autenticação: {str(e)}")
+        return None
 
 def upload_arquivo(service, caminho_arquivo):
-    """Faz upload de um único arquivo"""
     try:
-        nome_arquivo = os.path.basename(caminho_arquivo)
-        
-        metadata = {
-            'name': nome_arquivo,
-            'parents': [DRIVE_FOLDER_ID] if DRIVE_FOLDER_ID else []  # Corrigido typo (DRIVE -> DRIVE)
+        file_metadata = {
+            'name': os.path.basename(caminho_arquivo),
+            'parents': [DRIVE_FOLDER_ID] if DRIVE_FOLDER_ID else []
         }
         
-        media = MediaFileUpload(caminho_arquivo, resumable=True)
-        request = service.files().create(
-            body=metadata,
+        media = MediaFileUpload(caminho_arquivo)
+        file = service.files().create(
+            body=file_metadata,
             media_body=media,
-            fields='id,name'
-        )
+            fields='id'
+        ).execute()
         
-        response = request.execute()
-        print(f"✅ {response['name']} enviado (ID: {response['id']})")
+        print(f"✅ {file.get('name')} enviado (ID: {file.get('id')})")
         return True
-        
     except Exception as e:
-        print(f"❌ Falha no upload de {nome_arquivo}: {str(e)}")
+        print(f"❌ Falha no upload: {str(e)}")
         return False
 
 def main():
-    # Verifica variáveis essenciais
     if not SERVICE_ACCOUNT_JSON:
-        print("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada")
+        print("❌ Variáveis de ambiente não configuradas")
         return
-        
-    # Carrega lista de arquivos
+
     try:
-        if not sys.stdin.isatty():
-            arquivos = json.load(sys.stdin).get('caminhos_completos', [])
-        else:
-            arquivos = []
-    except json.JSONDecodeError:
-        print("❌ Erro ao decodificar JSON de entrada")
+        arquivos = json.load(sys.stdin).get('caminhos_completos', [])
+    except:
         arquivos = []
-    
-    # Autentica
-    drive_service = autenticar_drive()
-    if not drive_service:
+
+    service = autenticar_drive()
+    if not service:
         return
-        
-    # Processa uploads
-    resultados = []
-    for arq in arquivos:
-        if os.path.exists(arq):
-            resultados.append(upload_arquivo(drive_service, arq))
-        else:
-            print(f"⚠️ Arquivo não encontrado: {arq}")
-            resultados.append(False)
-    
-    print(f"\n📊 Resultado: {sum(resultados)}/{len(arquivos)} arquivos enviados")
+
+    for arquivo in arquivos:
+        upload_arquivo(service, arquivo)
 
 if __name__ == "__main__":
     main()
