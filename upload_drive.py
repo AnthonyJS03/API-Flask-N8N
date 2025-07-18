@@ -1,106 +1,75 @@
+# upload_drive.py (versão simplificada e segura)
 import os
 import json
-import time
-from google.oauth2.credentials import Credentials
+import sys
+from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.auth.transport.requests import Request
 
-# Caminhos fixos dos arquivos secretos
-CREDENTIALS_FILE = '/etc/secrets/credentials.json'
-TOKEN_FILE = '/etc/secrets/token.json'
-METADADOS_FILE = '/etc/secrets/metadados_shapefile.json'
-
-# ID da pasta no Google Drive (ou leia de variável de ambiente)
-PASTA_DESTINO_ID = '1rpazJv21rg7lCJHknjxqSFu8XewYSTRQ'
-
+# Configurações via variáveis de ambiente
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SERVICE_ACCOUNT_JSON = os.getenv('GCP_SERVICE_ACCOUNT_JSON')  # JSON completo em 1 linha
+DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')  # ID da pasta de destino
 
 def autenticar_drive():
+    """Conecta ao Google Drive usando Service Account"""
     try:
-        creds = None
-        if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        creds = Credentials.from_service_account_info(
+            json.loads(SERVICE_ACCOUNT_JSON),
+            scopes=SCOPES
+        )
         return build('drive', 'v3', credentials=creds)
-    
+    except json.JSONDecodeError:
+        print("❌ Erro: JSON da Service Account inválido")
     except Exception as e:
-        print(f"[ERRO] Autenticação falhou: {e}")
-        return None
+        print(f"❌ Falha na autenticação: {str(e)}")
+    return None
 
-def carregar_metadados():
+def upload_arquivo(service, caminho_arquivo):
+    """Faz upload de um único arquivo"""
     try:
-        with open(METADADOS_FILE) as f:
-            metadados = json.load(f)
+        nome_arquivo = os.path.basename(caminho_arquivo)
         
-        for caminho in metadados['caminhos_completos']:
-            if not os.path.exists(caminho):
-                raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
+        metadata = {
+            'name': nome_arquivo,
+            'parents': [DRIVE_FOLDER_ID] if DRIVE_FOLDER_ID else []
+        }
         
-        return metadados
-    except Exception as e:
-        print(f"[ERRO] Falha ao carregar metadados: {e}")
-        return None
-
-def upload_arquivo(service, caminho_arquivo, tentativa=1, max_tentativas=3):
-    nome_arquivo = os.path.basename(caminho_arquivo)
-    
-    mime_types = {
-        '.shp': 'application/octet-stream',
-        '.shx': 'application/octet-stream',
-        '.dbf': 'application/x-dbf',
-        '.prj': 'text/plain',
-        '.cpg': 'text/plain',
-        '.sbn': 'application/octet-stream',
-        '.sbx': 'application/octet-stream',
-        '.xml': 'application/xml'
-    }
-    
-    ext = os.path.splitext(nome_arquivo)[1].lower()
-    mime_type = mime_types.get(ext, 'application/octet-stream')
-    
-    file_metadata = {
-        'name': nome_arquivo,
-        'parents': [PASTA_DESTINO_ID] if PASTA_DESTINO_ID else []
-    }
-
-    try:
-        media = MediaFileUpload(caminho_arquivo, mimetype=mime_type, resumable=True)
-        request = service.files().create(body=file_metadata, media_body=media, fields='id,name,size')
-
-        response = None
-        while response is None:
-            status, response = request.next_chunk()
-            if status:
-                print(f"[UPLOAD] {nome_arquivo}: {int(status.progress() * 100)}%")
-
-        print(f"[SUCESSO] {response['name']} enviado! ID: {response['id']}")
+        media = MediaFileUpload(caminho_arquivo, resumable=True)
+        request = service.files().create(
+            body=metadata,
+            media_body=media,
+            fields='id,name'
+        )
+        
+        response = request.execute()
+        print(f"✅ {response['name']} enviado (ID: {response['id']})")
         return True
-    
-    except Exception as e:
-        if tentativa < max_tentativas:
-            print(f"[TENTATIVA {tentativa}] Falha. Retentando em 5s...")
-            time.sleep(5)
-            return upload_arquivo(service, caminho_arquivo, tentativa + 1)
-        print(f"[ERRO] Falha no upload {nome_arquivo}: {e}")
-        return False
         
+    except Exception as e:
+        print(f"❌ Falha no upload de {os.path.basename(caminho_arquivo)}: {str(e)}")
+        return False
+
 def main():
-    print("Iniciando processo de upload para o Google Drive...")
-    
-    metadados = carregar_metadados()
-    if not metadados:
+    # Verifica variáveis essenciais
+    if not SERVICE_ACCOUNT_JSON:
+        print("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada")
         return
+        
+    # Carrega lista de arquivos (via stdin ou vazia)
+    try:
+        arquivos = json.load(sys.stdin).get('caminhos_completos', []) if not sys.stdin.isatty() else []
+    except:
+        arquivos = []
     
+    # Autentica
     drive_service = autenticar_drive()
-    if not drive_service:
+    if not drive_service or not arquivos:
         return
-    
-    resultados = []
-    for caminho in metadados['caminhos_completos']:
-        resultados.append(upload_arquivo(drive_service, caminho))
-    
-    sucessos = sum(1 for r in resultados if r)
-    print(f"\nUpload: {sucessos} de {len(resultados)} arquivos enviados com sucesso")
+        
+    # Processa uploads
+    resultados = [upload_arquivo(drive_service, arq) for arq in arquivos]
+    print(f"\n📊 Resultado: {sum(resultados)}/{len(arquivos)} arquivos enviados")
 
 if __name__ == "__main__":
     main()
