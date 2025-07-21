@@ -11,14 +11,19 @@ DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
 def autenticar_drive():
     try:
+        cred_dict = json.loads(SERVICE_ACCOUNT_JSON)
+        # Corrige a private_key para ter quebras de linha reais
+        cred_dict['private_key'] = cred_dict['private_key'].replace('\\n', '\n')
+        
         creds = Credentials.from_service_account_info(
-            json.loads(SERVICE_ACCOUNT_JSON),
+            cred_dict,
             scopes=SCOPES
         )
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
         print(f"❌ Erro de autenticação: {str(e)}")
         return None
+
 
 def upload_arquivo(service, caminho_arquivo):
     try:
