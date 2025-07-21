@@ -11,15 +11,27 @@ DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
 def autenticar_drive():
     try:
+        # Carrega o JSON como dicionário
         cred_dict = json.loads(SERVICE_ACCOUNT_JSON)
-        # Corrige a private_key para ter quebras de linha reais
-        cred_dict['private_key'] = cred_dict['private_key'].replace('\\n', '\n')
         
+        # Substitui '\\n' por '\n' para formar um PEM válido
+        private_key_raw = cred_dict['private_key']
+        cred_dict['private_key'] = private_key_raw.replace('\\n', '\n').strip()
+
+        # Debug opcional para garantir que o PEM está formatado
+        if not cred_dict['private_key'].startswith('-----BEGIN PRIVATE KEY-----'):
+            raise ValueError("Formato inválido da chave privada (início incorreto)")
+        if not cred_dict['private_key'].endswith('-----END PRIVATE KEY-----'):
+            raise ValueError("Formato inválido da chave privada (fim incorreto)")
+
+        # Cria as credenciais
         creds = Credentials.from_service_account_info(
             cred_dict,
             scopes=SCOPES
         )
+
         return build('drive', 'v3', credentials=creds)
+    
     except Exception as e:
         print(f"❌ Erro de autenticação: {str(e)}")
         return None
